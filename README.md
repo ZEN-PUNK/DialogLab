@@ -1,10 +1,10 @@
-# DialogLab
+# VOX LAB
 
-<img src="content/dialoglab-fig.png" alt="DialogLab teaser figure" width="100%"/>
+<img src="content/voxlab-fig.png" alt="VOX LAB teaser figure" width="100%"/>
 
 [Paper](https://dl.acm.org/doi/10.1145/3746059.3747696) | [30s Preview](https://www.youtube.com/watch?v=AdvYhP8A51M) | [Video Figure](https://www.youtube.com/watch?v=U2Ag_Ktobzw) | [Web Demo](https://chatlab.3dvar.com/)
 
-**DialogLab** is an authoring tool for configuring and orchestrating multi-agent conversations with animated 3D avatars. Built with React, Vite, and Express, it enables researchers, designers, and developers to create, visualize, and evaluate complex agent-based dialogue systems.
+**VOX LAB** is an authoring tool for configuring and orchestrating multi-agent conversations with animated 3D avatars. Built with React, Vite, and Express, it enables researchers, designers, and developers to create, visualize, and evaluate complex agent-based dialogue systems.
 
 ## Features
 
@@ -24,7 +24,7 @@
 ## Repository Structure
 
 ```
-DialogLab/
+VOX-LAB/
 ├── client/         # React UI (Vite) - Dev server on port 5173
 │   ├── src/        # React components and application logic
 │   └── public/     # Static assets (avatars, libraries)
@@ -110,12 +110,12 @@ Example avatar files (`client/public/assets/*.glb`) were created using [Ready Pl
 
 ## Citation
 
-If you use DialogLab in your research, please cite our UIST 2025 paper:
+If you use VOX LAB in your research, please cite our UIST 2025 paper:
 
 ```bibtex
-@inproceedings{dialoglab2025,
+@inproceedings{voxlab2025,
 author = {Hu, Erzhen and Chen, Yanhe and Li, Mingyi and Phadnis, Vrushank and Xu, Pingmei and Qian, Xun and Olwal, Alex and Kim, David and Heo, Seongkook and Du, Ruofei},
-  title     = {DialogLab: Configuring and Orchestrating Multi-Agent Conversations},
+  title     = {VOX LAB: Configuring and Orchestrating Multi-Agent Conversations},
   booktitle = {Proceedings of the 38th Annual ACM Symposium on User Interface Software and Technology (UIST '25)},
   year      = {2025},
   publisher = {Association for Computing Machinery},

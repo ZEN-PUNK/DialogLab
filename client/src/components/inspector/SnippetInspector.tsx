@@ -12,7 +12,7 @@ import React from "react"
 import ConversationPrompt, { TooltipIcon } from "./ConversationPrompt"
 
 const SnippetInspector: React.FC<{ currentTopic: string }> = ({ currentTopic }) => {
-  const { selectedItem, updateSelectedItem, getCachedDefaultSpeakers, speakers, nodes, closeInspector, updateSnippetNode } = useEditorStore() as EditorState;
+  const { selectedItem, updateSelectedItem, getCachedDefaultSpeakers, speakers, nodes, closeInspector, updateSnippetNode, setSelectedItem } = useEditorStore() as EditorState;
   const [localNode, setLocalNode] = useState<SnippetNode | undefined>(undefined);
   const [isAvatarSectionExpanded, setIsAvatarSectionExpanded] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -600,6 +600,23 @@ const SnippetInspector: React.FC<{ currentTopic: string }> = ({ currentTopic }) 
                           <span className="ml-1 text-xs">⚡</span>
                         )}
                       </Badge>
+                      
+                      {/* Edit Avatar Button */}
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          // Open AvatarInspector for this speaker
+                          setSelectedItem({
+                            avatarConfig: speaker,
+                            type: "avatar",
+                            id: speaker.id
+                          });
+                        }}
+                        className="p-1 rounded hover:bg-blue-500/20 text-blue-400 hover:text-blue-300 transition-colors"
+                        title="Edit avatar properties"
+                      >
+                        <Pencil className="w-3 h-3" />
+                      </button>
 
                       {speaker.party && (
                         <div className="px-1.5 py-0.5 rounded text-xs whitespace-nowrap bg-green-500/20 border border-green-500/30 text-green-300">

@@ -2,17 +2,74 @@ import React, { useState, useEffect, useCallback } from 'react';
 import useEditorStore from './store';
 import { avatarTemplates } from '../topic/avatarTemplates';
 
-const voiceMapByGender = {
-  male: [
-    { value: 'en-US-Standard-B', label: 'American Voice (M)' },
-    { value: 'en-GB-Standard-B', label: 'British Voice (M)' },
-    { value: 'en-GB-Standard-D', label: 'British Voice (M2)' }
-  ],
-  female: [
-    { value: 'en-US-Standard-C', label: 'American Voice (F)' },
-    { value: 'en-GB-Standard-A', label: 'British Voice (F)' }
-  ]
+// Real Azure Neural Voices with style support
+const VOICE_CATALOG = {
+  'en-US-female-aria': {
+    label: 'en-US-AriaNeural (F)',
+    region: 'US',
+    gender: 'female',
+    styles: ['cheerful', 'sad', 'angry', 'calm', 'fearful', 'disgruntled', 'serious', 'shouting', 'unfriendly', 'whispering']
+  },
+  'Kore': {
+    label: 'Kore (Gemini Female)',
+    region: 'US',
+    gender: 'female',
+    styles: ['cheerful', 'sad', 'angry', 'calm', 'fearful', 'disgruntled', 'serious']
+  },
+  'en-US-female-jenny': {
+    label: 'en-US-JennyNeural (F)',
+    region: 'US',
+    gender: 'female',
+    styles: ['cheerful', 'sad', 'angry', 'calm', 'fearful', 'disgruntled', 'serious']
+  },
+  'en-US-male-brian': {
+    label: 'en-US-BrianNeural (M)',
+    region: 'US',
+    gender: 'male',
+    styles: ['cheerful', 'sad', 'angry', 'calm', 'fearful', 'disgruntled', 'serious', 'shouting', 'unfriendly', 'whispering']
+  },
+  'en-US-male-christopher': {
+    label: 'en-US-ChristopherNeural (M)',
+    region: 'US',
+    gender: 'male',
+    styles: ['cheerful', 'sad', 'angry', 'calm', 'fearful', 'disgruntled', 'serious']
+  },
+  'en-US-male-guy': {
+    label: 'en-US-GuyNeural (M)',
+    region: 'US',
+    gender: 'male',
+    styles: ['cheerful', 'sad', 'calm', 'fearful', 'disgruntled']
+  },
+  'en-GB-female-sonia': {
+    label: 'en-GB-SoniaNeural (F)',
+    region: 'GB',
+    gender: 'female',
+    styles: ['cheerful', 'sad', 'calm', 'fearful', 'disgruntled']
+  },
+  'en-GB-male-ryan': {
+    label: 'en-GB-RyanNeural (M)',
+    region: 'GB',
+    gender: 'male',
+    styles: ['cheerful', 'sad', 'calm', 'fearful', 'disgruntled', 'serious', 'unfriendly', 'whispering']
+  },
+  'en-GB-male-thomas': {
+    label: 'en-GB-ThomasNeural (M)',
+    region: 'GB',
+    gender: 'male',
+    styles: ['cheerful', 'sad', 'angry', 'calm', 'fearful', 'disgruntled', 'serious']
+  }
 };
+
+// Voice groups by gender for filter
+const voiceMapByGender = {
+  male: Object.keys(VOICE_CATALOG).filter(key => VOICE_CATALOG[key].gender === 'male'),
+  female: Object.keys(VOICE_CATALOG).filter(key => VOICE_CATALOG[key].gender === 'female')
+};
+
+// Voice styles
+const VOICE_STYLES = [
+  'neutral', 'cheerful', 'sad', 'angry', 'calm', 'fearful', 'disgruntled', 'serious', 'shouting', 'unfriendly', 'whispering'
+];
 
 // Predefined options for personality and interaction pattern
 const personalityOptions = [
@@ -53,9 +110,13 @@ function AvatarInspector({ avatar }) {
   const [attributeKey, setAttributeKey] = useState('');
   const [attributeValue, setAttributeValue] = useState('');
   
+  // Add state for voice style and intensity
+  const [voiceStyle, setVoiceStyle] = useState('neutral');
+  const [styleDegree, setStyleDegree] = useState(1.0);
+  
   const getDefaultVoiceByGender = (gender) => {
     const genderVoices = voiceMapByGender[gender] || voiceMapByGender.male;
-    return genderVoices[0].value; // Return first voice in the list for the gender
+    return genderVoices[0]; // Return first voice key from the list for the gender
   };
   
   // Guard against missing avatar data
@@ -115,6 +176,10 @@ function AvatarInspector({ avatar }) {
           // Set custom attributes
           setCustomAttributes(mergedConfig.customAttributes || {});
           
+          // Set voice style and degree from settings
+          setVoiceStyle(mergedConfig.settings?.voiceStyle || 'neutral');
+          setStyleDegree(mergedConfig.settings?.styleDegree || 1.0);
+          
         } else if (template) {
           // If no saved config but template exists, use template
           updateSelectedItem({
@@ -127,6 +192,10 @@ function AvatarInspector({ avatar }) {
           
           // Set custom attributes from template
           setCustomAttributes(template.customAttributes || {});
+          
+          // Set voice style from template or default
+          setVoiceStyle(template.settings?.voiceStyle || 'neutral');
+          setStyleDegree(template.settings?.styleDegree || 1.0);
           
           // Save template to localStorage
           localStorage.setItem(storageKey, JSON.stringify(template));
@@ -145,9 +214,17 @@ function AvatarInspector({ avatar }) {
               proactiveThreshold: 0.3,
               fillerWordsFrequency: "none",
               roleDescription: "",
-              customAttributes: {}
+              customAttributes: {},
+              settings: {
+                voiceStyle: 'neutral',
+                styleDegree: 1.0
+              }
             }
           });
+          
+          // Set default voice style state
+          setVoiceStyle('neutral');
+          setStyleDegree(1.0);
         }
         
         // Apply settings to avatar instance
@@ -412,15 +489,93 @@ function AvatarInspector({ avatar }) {
     }, 500);
   };
   
+  const handleVoiceStyleChange = (e) => {
+    const newStyle = e.target.value;
+    setVoiceStyle(newStyle);
+    
+    // Update settings with voice style
+    const updatedConfig = {
+      ...avatar.avatarConfig,
+      settings: {
+        ...(avatar.avatarConfig?.settings || {}),
+        voiceStyle: newStyle,
+        styleDegree: styleDegree
+      }
+    };
+    
+    updateSelectedItem({
+      ...selectedItem,
+      avatarConfig: updatedConfig
+    });
+    
+    saveAvatarConfig(updatedConfig);
+    
+    // Dispatch event for style change
+    const customEvent = new CustomEvent('avatarConfigChanged', {
+      detail: {
+        id: selectedItem.id,
+        config: updatedConfig
+      }
+    });
+    document.dispatchEvent(customEvent);
+  };
+  
+  const handleStyleDegreeChange = (e) => {
+    const newDegree = parseFloat(e.target.value);
+    setStyleDegree(newDegree);
+    
+    // Update settings with style degree
+    const updatedConfig = {
+      ...avatar.avatarConfig,
+      settings: {
+        ...(avatar.avatarConfig?.settings || {}),
+        voiceStyle: voiceStyle,
+        styleDegree: newDegree
+      }
+    };
+    
+    updateSelectedItem({
+      ...selectedItem,
+      avatarConfig: updatedConfig
+    });
+    
+    saveAvatarConfig(updatedConfig);
+    
+    // Dispatch event for style change
+    const customEvent = new CustomEvent('avatarConfigChanged', {
+      detail: {
+        id: selectedItem.id,
+        config: updatedConfig
+      }
+    });
+    document.dispatchEvent(customEvent);
+  };
+  
   // Function to get appropriate test text based on voice type
   const getVoiceTestText = (voice) => {
     // Shorter test phrases to avoid TTS rate limiting
-    if (voice.includes('en-GB')) {
+    if (voice.includes('en-GB') || voice.includes('GB')) {
       return "Hello, this is my British voice.";
-    } else if (voice.includes('en-US')) {
+    } else if (voice.includes('en-US') || voice.includes('US')) {
       return "Hello, this is my American voice.";
     } else {
       return "Hello, this is my new voice.";
+    }
+  };
+
+  // Function to test voice
+  const handleTestVoice = (voice) => {
+    const avatarInstance = window.avatarInstancesRef?.current?.[selectedItem.id];
+    if (avatarInstance && typeof avatarInstance.say === 'function') {
+      try {
+        const testText = getVoiceTestText(voice);
+        console.log(`Testing voice ${voice} with text: "${testText}"`);
+        avatarInstance.say(testText);
+      } catch (error) {
+        console.error('Error testing voice:', error);
+      }
+    } else {
+      console.warn('Avatar instance not available or does not have say method');
     }
   };
 
@@ -1054,18 +1209,30 @@ function AvatarInspector({ avatar }) {
         <div className="space-y-1">
           <label className="block text-xs font-medium text-black">
             Voice
-            <TooltipIcon text="The avatar's speaking voice" />
+            <TooltipIcon text="The avatar's speaking voice - choose from available Azure Neural voices" />
           </label>
           <select 
             className="w-full p-1.5 theme-bg-input theme-border theme-text-primary text-xs rounded"
             value={selectedItem.avatarConfig?.voice || getDefaultVoiceByGender(avatarGender)}
             onChange={handleVoiceChange}
           >
-            <option value="en-GB-Standard-A">British Voice (F)</option>
-            <option value="en-GB-Standard-B">British Voice (M)</option>
-            <option value="en-GB-Standard-D">British Voice (M2)</option>
-            <option value="en-US-Standard-B">American Voice (M)</option>
-            <option value="en-US-Standard-C">American Voice (F)</option>
+            <optgroup label="US English - Female">
+              <option value="en-US-female-aria">{VOICE_CATALOG['en-US-female-aria'].label}</option>
+              <option value="en-US-female-eve">{VOICE_CATALOG['en-US-female-eve'].label}</option>
+              <option value="en-US-female-jenny">{VOICE_CATALOG['en-US-female-jenny'].label}</option>
+            </optgroup>
+            <optgroup label="US English - Male">
+              <option value="en-US-male-brian">{VOICE_CATALOG['en-US-male-brian'].label}</option>
+              <option value="en-US-male-christopher">{VOICE_CATALOG['en-US-male-christopher'].label}</option>
+              <option value="en-US-male-guy">{VOICE_CATALOG['en-US-male-guy'].label}</option>
+            </optgroup>
+            <optgroup label="British English - Female">
+              <option value="en-GB-female-sonia">{VOICE_CATALOG['en-GB-female-sonia'].label}</option>
+            </optgroup>
+            <optgroup label="British English - Male">
+              <option value="en-GB-male-ryan">{VOICE_CATALOG['en-GB-male-ryan'].label}</option>
+              <option value="en-GB-male-thomas">{VOICE_CATALOG['en-GB-male-thomas'].label}</option>
+            </optgroup>
           </select>
           <div className="mt-2">
             <button 
@@ -1076,8 +1243,51 @@ function AvatarInspector({ avatar }) {
             </button>
             <span className="text-xs text-black ml-2 italic">Changes apply immediately</span>
           </div>
-          </div>
         </div>
+
+        {/* Voice Style selection */}
+        <div className="space-y-1 mt-3 pt-2 border-t border-slate-700">
+          <label className="block text-xs font-medium text-black">
+            Voice Style
+            <TooltipIcon text="Emotional style applied to the voice (professional, cheerful, sad, etc.)" />
+          </label>
+          <select 
+            className="w-full p-1.5 theme-bg-input theme-border theme-text-primary text-xs rounded"
+            value={selectedItem.avatarConfig?.settings?.voiceStyle || voiceStyle}
+            onChange={handleVoiceStyleChange}
+          >
+            <option value="neutral">neutral (no emotion)</option>
+            <option value="cheerful">cheerful</option>
+            <option value="sad">sad</option>
+            <option value="angry">angry</option>
+            <option value="calm">calm</option>
+            <option value="fearful">fearful</option>
+            <option value="disgruntled">disgruntled</option>
+            <option value="serious">serious</option>
+            <option value="shouting">shouting</option>
+            <option value="unfriendly">unfriendly</option>
+            <option value="whispering">whispering</option>
+          </select>
+        </div>
+
+        {/* Style Degree/Intensity Slider */}
+        <div className="space-y-1 mt-3 pt-2">
+          <label className="block text-xs font-medium text-black">
+            Style Intensity: {(selectedItem.avatarConfig?.settings?.styleDegree || styleDegree).toFixed(1)}x
+            <TooltipIcon text="Controls how strong the emotional style is applied (0.5 = subtle, 1.0 = normal, 2.0 = very expressive)" />
+          </label>
+          <input 
+            type="range"
+            min="0.5"
+            max="2.0"
+            step="0.1"
+            value={selectedItem.avatarConfig?.settings?.styleDegree || styleDegree}
+            onChange={handleStyleDegreeChange}
+            className="w-full h-2 bg-slate-700 rounded appearance-none cursor-pointer"
+          />
+          <span className="text-xs text-gray-400">0.5 (subtle) to 2.0 (very expressive)</span>
+        </div>
+                </div>
 
                 {/* Mood Settings */}
                 <div className="p-2 bg-slate-900/30 rounded border border-slate-800/30">

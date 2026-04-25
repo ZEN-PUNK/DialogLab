@@ -96,7 +96,9 @@ function getCurrentModel() {
  * @returns {Promise<string>} The generated text
  */
 async function generateText(prompt, options = {}) {
-  const provider = options.provider || currentProvider;
+  let provider = options.provider || currentProvider;
+  if (provider === 'azure') provider = PROVIDERS.GEMINI;
+
   if (provider === PROVIDERS.GEMINI) {
     // Set the default Gemini model if not specified
     const geminiOptions = { ...options };
@@ -139,7 +141,9 @@ async function generateText(prompt, options = {}) {
  * @returns {Promise<string>} The generated response
  */
 async function chatCompletion(messages, options = {}) {
-  const provider = options.provider || currentProvider;
+  let provider = options.provider || currentProvider;
+  if (provider === 'azure') provider = PROVIDERS.GEMINI;
+
   if (provider === PROVIDERS.GEMINI) {
     
     // Set the default Gemini model if not specified

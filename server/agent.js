@@ -2,6 +2,51 @@ import dotenv from "dotenv";
 import * as llmProvider from "./providers/llmProvider.js";
 dotenv.config();
 
+// Insurance Claims Context Library
+const CLAIMS_CONTEXT = {
+  'auto-accident': {
+    focus: 'Auto Insurance Claims',
+    claimTypes: ['collision', 'liability', 'comprehensive', 'medical payment'],
+    keyInfo: ['accident date/time/location', 'vehicles involved', 'injuries', 'police report', 'witness contacts'],
+    assessmentCriteria: ['liability determination', 'vehicle damage evaluation', 'medical review', 'coverage verification'],
+    procedures: ['claim intake', 'investigation', 'settlement', 'repair coordination']
+  },
+  'property-damage': {
+    focus: 'Property & Homeowners Claims',
+    claimTypes: ['water damage', 'theft', 'vandalism', 'natural disaster', 'fire damage'],
+    keyInfo: ['date of loss', 'property address', 'damage description', 'itemized losses', 'photos of damage'],
+    assessmentCriteria: ['coverage limits', 'deductible application', 'actual cash value vs replacement cost', 'policy exclusions'],
+    procedures: ['claim documentation', 'adjuster inspection', 'estimate review', 'claim processing']
+  },
+  'generic': {
+    focus: 'General Insurance Claims',
+    claimTypes: ['general claim'],
+    keyInfo: ['claim details', 'coverage information', 'loss assessment'],
+    assessmentCriteria: ['claim validity', 'coverage determination'],
+    procedures: ['claim handling']
+  }
+};
+
+// Helper function to generate claims context
+function generateClaimsContext(claimType = 'generic') {
+  const context = CLAIMS_CONTEXT[claimType] || CLAIMS_CONTEXT.generic;
+  
+  return `
+CLAIM FOCUS: ${context.focus}
+Claim Types: ${context.claimTypes.join(', ')}
+Key Information to Gather: ${context.keyInfo.join(', ')}
+Assessment Criteria: ${context.assessmentCriteria.join(', ')}
+Standard Procedures: ${context.procedures.join(', ')}
+
+When handling ${context.focus.toLowerCase()}:
+- Gather all relevant information from the claimant
+- Document findings systematically
+- Follow company procedures and guidelines
+- Maintain professionalism and empathy
+- Keep clear records for the file
+`;
+}
+
 async function generateDynamicAttributeContext(customAttributes) {
     // Create a list of attribute descriptions to send to the AI.
     const attributeDescriptions = Object.entries(customAttributes)
@@ -12,13 +57,13 @@ async function generateDynamicAttributeContext(customAttributes) {
   
     console.log(attributeDescriptions);
   
-    const prompt = `Given these attributes of a person - ${attributeDescriptions}. Generate a concise sentence that could be used in a conversation to reflect these attributes contextually, starting from you rather than I .`;
+    const prompt = `Given these attributes of an insurance claims professional - ${attributeDescriptions}. Generate a concise sentence that could be used in a conversation to reflect these attributes and professional background, starting from your perspective rather than describing yourself in third person.`;
 
     try {
       return await llmProvider.generateText(prompt, { maxTokens: 75, temperature: 0.7 });
     } catch (error) {
       console.error("Error generating dynamic attribute context:", error);
-      return "This agent has unique qualities that enhance our conversation.";
+      return "I'm here to help process your claim professionally and efficiently.";
     }
   }
 
@@ -98,18 +143,55 @@ class Agent {
           derailerContext = "Respond to the emotional subtext rather than the content, changing the conversation's emotional tone.";
         }
       }
+      
+      // Insurance Claims Context
+      const claimsContext = `
+Claims Handling Approach:
+1. Listen empathetically to the claimant's situation
+2. Gather accurate, detailed information about the accident
+3. Assess liability and document evidence professionally
+4. Follow company procedures and maintain compliance
+5. Communicate clearly and keep claimants informed
+
+Role & Responsibilities: ${this.customAttributes?.role || "Insurance Professional"}
+Experience: ${this.customAttributes?.experience || "Insurance industry experience"}
+Key Expertise: ${this.customAttributes?.expertise || "Claims handling"}
+Communication Style: ${this.customAttributes?.communicationStyle || "Professional"}
+Strengths: ${this.customAttributes?.strength || "Understanding claims process"}
+
+Claims Handling Guidelines:
+- Remain calm and professional in all interactions
+- Show empathy for the claimant's situation
+- Ask clarifying questions to gather complete information
+- Document everything accurately for the claim file
+- Explain next steps clearly to manage expectations
+- Verify coverage and policy details
+- Follow all regulatory and company guidelines`;
   
-      const prompt = `You are ${this.name}, a ${this.personality} person. ${attributeContext} 
+      const prompt = `You are ${this.name}, a ${this.personality} insurance professional. ${attributeContext} 
             ${this.roleDescription ? "Role: " + this.roleDescription : ""}
-            ${isStartingMessage && message !== "This is the first scene" ? `What happened in the last scene: ${message}` : ""}
-            ${isStartingMessage && message !== "This is the first scene" ? "briefly summarize what happened in the last scene and transition to the current context (use 1-2 sentences): " : ""}
+            
+            ${claimsContext}
+            
+            ${isStartingMessage && message !== "This is the first scene" ? `Context from last scene: ${message}` : ""}
             ${derailerContext}
+            
+            Claims Excellence Guidelines:
+            - Be empathetic and professional in all communications
+            - Ask thorough but natural follow-up questions
+            - Document specific details (times, locations, vehicle info, injuries)
+            - Explain claim process and next steps clearly
+            - Avoid jargon; explain technical terms in simple language
+            - Remain objective while showing genuine concern for the claimant
+            - Build trust through active listening and clear communication
+            
             ${context}
             ${interruptionContext}
             ${!isStartingMessage ? `Last message: ${message}` : ""}
            
-            Respond briefly (1-2 sentences), building on previous points without repeating them.
-            Keep your response conversational and natural. After you speak, ${nextSpeaker} will respond.`;
+            Respond naturally (1-2 sentences) in a professional but caring manner.
+            Ask follow-up questions if needed to clarify details.
+            After you speak, ${nextSpeaker} will respond.`;
 
             // console.log(prompt);
              // ${isStartingMessage ? "What happened in the last scene: " : `${lastSpeaker ? lastSpeaker + " said: " : "Last message: "}`}${message}"
@@ -138,7 +220,7 @@ class Agent {
   
         return { fullResponse, interrupted: false };
       } catch (error) {
-        console.error("Error in reply method:", error);
+        console.error("Error in reply method:", error, "\nStack:", error.stack);
         return {
           fullResponse: "Sorry, I couldn't generate a response.",
           interrupted: false,
@@ -151,13 +233,8 @@ class Agent {
       response = response.replace(/^[^:]+:\s*/, "");
   
       // Limit the response to three sentences
-      const sentences = response.match(/[^.!?]+[.!?]+/g) || [];
-      return sentences.slice(0, 3).join(" ").trim();
-    }
-  
-    setProactiveSettings(settings) {
-      const { triggerWords = [], proactiveTopics = [], threshold } = settings;
-      this.triggerWords = new Set(triggerWords);
+    const sentences = response.match(/[^.!?]+[.!?]*/g) || [];
+    return sentences.slice(0, 3).join(" ").trim() || response.trim();
       this.proactiveTopics = new Set(proactiveTopics);
       if (threshold) this.proactiveThreshold = threshold;
     }

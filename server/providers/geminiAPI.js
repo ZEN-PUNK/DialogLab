@@ -9,8 +9,8 @@ let CURRENT_API_KEY;
 let genAI = null;
 
 const GEMINI_MODELS = {          
-  FLASH_LITE: "gemini-2.0-flash-lite",
-  FLASH: "gemini-2.0-flash",
+  FLASH_LITE: "gemini-2.5-flash-lite",
+  FLASH: "gemini-2.5-flash",
 };
 
 // Default model
@@ -91,7 +91,7 @@ async function generateText(prompt, options = {}) {
     
     const generationConfig = {
       temperature: options.temperature || 0.7,
-      maxOutputTokens: options.maxTokens || 100,
+      maxOutputTokens: options.maxTokens ? options.maxTokens * 15 : 1500,
     };
 
     // Format the prompt for structured data if needed
@@ -166,7 +166,7 @@ async function chatCompletion(messages, options = {}) {
     
     const generationConfig = {
       temperature: options.temperature || 0.7,
-      maxOutputTokens: options.maxTokens || 100,
+      maxOutputTokens: options.maxTokens ? options.maxTokens * 15 : 1500,
     };
 
     // Convert from OpenAI format to Gemini format

@@ -177,7 +177,8 @@ class ConversationManager {
       customAttributes,
       fillerWordsFrequency,
       isProactive,
-      roleDescription,
+      0.3, // default proactiveThreshold
+      roleDescription
     );
 
     if (proactiveSettings) {

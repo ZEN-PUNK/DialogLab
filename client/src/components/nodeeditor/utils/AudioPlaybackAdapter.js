@@ -314,9 +314,13 @@ export class AudioPlaybackAdapter {
         const statusResp = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.LLM_STATUS}`);
         if (statusResp.ok) {
           const status = await statusResp.json();
-          if (!status.geminiConfigured) {
-            alert('Please set your Gemini API key first.');
-            return Promise.reject(new Error('Gemini API key not configured'));
+          // Check if the current provider is configured (instead of hardcoding Gemini)
+          const currentProvider = status.currentProvider || 'gemini';
+          const isConfigured = status[`${currentProvider}Configured`] || false;
+          
+          if (!isConfigured) {
+            alert(`Please configure ${currentProvider.toUpperCase()} API first.`);
+            return Promise.reject(new Error(`${currentProvider} API key not configured`));
           }
         }
       } catch (e) {
