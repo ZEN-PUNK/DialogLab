@@ -1193,7 +1193,7 @@ const useEditorStore = create<EditorState>()(
       setConversationMode: (mode) => set({ conversationMode: mode }),
     }),
     {
-      name: 'vox-insurance-claim-v5',
+      name: 'editor-storage',
       
       // Only persist these state properties
       partialize: (state) => ({
@@ -1284,22 +1284,6 @@ export const getDefaultSpeakers = (() => {
       if (savedParticipants) {
         const participants = JSON.parse(savedParticipants) as AvatarConfig[];
         if (Array.isArray(participants) && participants.length > 0) {
-          // Force fix for corrupted legacy states and old Google voices
-          participants.forEach(p => {
-            if (p.name === 'Alice' && (!p.url || p.url.includes('p-f-'))) {
-               p.url = "/assets/female-avatar1.glb";
-            }
-            if (p.name === 'Alice' && p.voice?.startsWith('en-GB-Standard') || p.voice === undefined) {
-               p.voice = 'en-US-female-aria';
-            }
-            if (p.name === 'Bob' && (!p.url || p.url.includes('p-m-'))) {
-               p.url = "/assets/male-avatar1.glb";
-            }
-            if (p.name === 'Bob' && p.voice?.startsWith('en-GB-Standard') || p.voice === undefined) {
-               p.voice = 'en-US-male-brian';
-            }
-          });
-
           // Make sure participants have correct isHuman flag
           const updatedParticipants = participants.map(participant => ({
             ...participant,
@@ -1325,11 +1309,11 @@ export const getDefaultSpeakers = (() => {
             cameraRotateY: 0,
             cameraView: "upper",
             lipsyncLang: "en",
-            mood: "professional",
-            ttsLang: "en-US"
+            mood: "neutral",
+            ttsLang: "en-GB"
           },
           url: "/assets/female-avatar1.glb",
-          voice: "en-US-female-aria",
+          voice: "en-GB-Standard-A",
           isHuman: humanParticipants.includes("Alice")
         },
         {
@@ -1342,11 +1326,11 @@ export const getDefaultSpeakers = (() => {
             cameraRotateY: 0,
             cameraView: "upper",
             lipsyncLang: "en",
-            mood: "friendly",
-            ttsLang: "en-US"
+            mood: "neutral",
+            ttsLang: "en-GB"
           },
           url: "/assets/male-avatar1.glb",
-          voice: "en-US-male-brian",
+          voice: "en-GB-Standard-B",
           isHuman: humanParticipants.includes("Bob")
         },
         {
@@ -1360,10 +1344,10 @@ export const getDefaultSpeakers = (() => {
             cameraView: "upper",
             lipsyncLang: "en",
             mood: "neutral",
-            ttsLang: "en-US"
+            ttsLang: "en-GB"
           },
           url: "/assets/male-avatar2.glb",
-          voice: "en-US-male-christopher",
+          voice: "en-GB-Standard-D",
           isHuman: humanParticipants.includes("Charlie")
         }
       ];

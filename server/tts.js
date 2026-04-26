@@ -1,18 +1,108 @@
 import path from "path";
 import fs from "fs";
-import { exec } from "child_process";
+import { exec, execFile } from "child_process";
 import os from "os";
 import dotenv from "dotenv";
 import axios from "axios";
 import { v4 as uuidv4 } from 'uuid';
+import { addNoiseForSpeaker } from "./audioNoise.js";
 // Load environment variables
 dotenv.config();
 
 let currentTtsApiKey = process.env.TTS_API_KEY || '';
-let currentTtsProvider = process.env.TTS_PROVIDER || 'azure';
+let currentTtsProvider = 'gemini';
+let currentTtsEndpoint = process.env.TTS_ENDPOINT || '';
 let currentGeminiApiKey = process.env.GEMINI_API_KEY || '';
-let currentAzureTtsKey = process.env.AZURE_TTS_KEY || '';
-let currentAzureTtsEndpoint = process.env.AZURE_TTS_ENDPOINT || '';
+let currentGeminiTtsModel = process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
+let currentGradiumApiKey = process.env.GRADIUM_API_KEY || '';
+let currentGradiumTtsEndpoint = process.env.GRADIUM_TTS_ENDPOINT || 'https://api.gradium.ai/api/post/speech/tts';
+let currentGradiumTtsModel = process.env.GRADIUM_TTS_MODEL || 'default';
+let currentGradiumDefaultVoiceId = process.env.GRADIUM_TTS_VOICE_ID || 'YTpq7expH9539ERJ';
+let currentGradiumAliceVoiceId = process.env.GRADIUM_TTS_VOICE_ID_ALICE || 'YTpq7expH9539ERJ';
+let currentGradiumBobVoiceId = process.env.GRADIUM_TTS_VOICE_ID_BOB || 'LFZvm12tW_z0xfGo';
+
+function isGoogleTtsConfigured() {
+  return Boolean(currentTtsApiKey && String(currentTtsApiKey).trim()) &&
+    Boolean(currentTtsEndpoint && String(currentTtsEndpoint).trim());
+}
+
+function buildGoogleTtsUrl() {
+  const base = String(currentTtsEndpoint || '').trim();
+  if (!base) return '';
+  return base.includes('?')
+    ? `${base}&key=${encodeURIComponent(currentTtsApiKey)}`
+    : `${base}?key=${encodeURIComponent(currentTtsApiKey)}`;
+}
+
+function isGradiumConfigured() {
+  return Boolean(currentGradiumApiKey && String(currentGradiumApiKey).trim()) &&
+    Boolean(currentGradiumTtsEndpoint && String(currentGradiumTtsEndpoint).trim());
+}
+
+function resolveGradiumVoiceId(request) {
+  const speaker = String(request?.speakerName || '').trim().toLowerCase();
+  const voiceName = String(request?.voice?.name || '').trim().toLowerCase();
+
+  const inferredSpeaker = (() => {
+    if (speaker) return speaker;
+    if (!voiceName) return '';
+
+    if (voiceName.includes('male') || voiceName.endsWith('-b') || voiceName.endsWith('-d')) {
+      return 'bob';
+    }
+
+    if (voiceName.includes('female') || voiceName.endsWith('-a') || voiceName.endsWith('-c') || voiceName.endsWith('-f')) {
+      return 'alice';
+    }
+
+    return '';
+  })();
+
+  if (inferredSpeaker === 'alice' && currentGradiumAliceVoiceId) {
+    return currentGradiumAliceVoiceId;
+  }
+  if (inferredSpeaker === 'bob' && currentGradiumBobVoiceId) {
+    return currentGradiumBobVoiceId;
+  }
+
+  return currentGradiumDefaultVoiceId;
+}
+
+function normalizeSpeechText(text) {
+  const collapsed = text
+    .replace(/\s+/g, ' ')
+    .replace(/([,;:!?])\s{2,}/g, '$1 ')
+    .replace(/\.\s{2,}/g, '. ')
+    .trim();
+
+  // Gemini tends to over-pause at punctuation, so flatten internal punctuation for faster delivery.
+  return collapsed
+    .replace(/\.\s+(?=[A-Z])/g, ' ')
+    .replace(/[,;:](?=\s)/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractSpeechText(input = {}) {
+  if (typeof input.text === 'string' && input.text.trim()) {
+    return normalizeSpeechText(input.text);
+  }
+
+  if (typeof input.ssml === 'string' && input.ssml.trim()) {
+    return normalizeSpeechText(
+      input.ssml
+        .replace(/<mark\b[^>]*\/>/gi, ' ')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+    );
+  }
+
+  return '';
+}
 
 // Gemini TTS client - uses Gemini 2.0 Live API for text-to-speech
 const geminiClient = {
@@ -24,7 +114,12 @@ const geminiClient = {
         throw new Error('Gemini API key not configured');
       }
       
-      const text = request.input?.text || '';
+      const text = extractSpeechText(request.input);
+      console.log(`[${new Date().toISOString()}] Gemini TTS: Extracted text preview: "${text.slice(0, 120)}${text.length > 120 ? '...' : ''}"`);
+
+      if (!text) {
+        throw new Error('Gemini TTS request did not contain readable text or SSML content');
+      }
       
       // Use Gemini API REST endpoint for text-to-speech audio generation
       // This uses the Audio generation capability of Gemini
@@ -44,11 +139,11 @@ const geminiClient = {
         }
       }
 
-      // Format prompt to ensure strictly TTS behavior
-      const promptText = `Please act as a direct text-to-speech engine. Speak exactly the following text verbatim, without adding any conversational filler, sound effects, or descriptions:\n\n"${text}"`;
+      // Keep the spoken words exact, but bias the model toward brisk conversational pacing.
+      const promptText = `Speak the following text exactly as written. Preserve the words verbatim, but use natural conversational pacing with short sentence pauses and no exaggerated breaks at punctuation. Do not add filler, effects, or descriptions.\n\n"${text}"`;
 
       const response = await axios.post(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=${currentGeminiApiKey}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${currentGeminiTtsModel}:generateContent?key=${currentGeminiApiKey}`,
         {
           contents: [{
             role: "user",
@@ -103,9 +198,8 @@ const geminiClient = {
         console.log(`[${new Date().toISOString()}] Gemini TTS: Audio generated successfully`);
         return [{ audioContent: wavBuffer.toString('base64') }];
       } else {
-        console.log(`[${new Date().toISOString()}] Gemini TTS: No audio in response, creating fallback`);
-        // Fallback to Azure if Gemini doesn't return audio
-        return await azureClient.synthesizeSpeech(request);
+        console.log(`[${new Date().toISOString()}] Gemini TTS: No audio in response`);
+        throw new Error('Gemini TTS returned no audio content');
       }
     } catch (error) {
       console.error(`[${new Date().toISOString()}] Gemini TTS API Error:`, error.message);
@@ -113,160 +207,184 @@ const geminiClient = {
         console.error(`Response status: ${error.response.status}`);
         console.error(`Response data:`, error.response.data);
       }
-      // Fall back to Azure TTS on error
-      console.log(`[${new Date().toISOString()}] Gemini TTS: Falling back to Azure TTS`);
-      return await azureClient.synthesizeSpeech(request);
+      throw error;
     }
   }
 };
 
-// Google TTS client
 const googleClient = {
   synthesizeSpeech: async (request) => {
-    try {
-      console.log(`[${new Date().toISOString()}] Google TTS: Making API call`);
-      
-      const apiRequest = {
+    if (!isGoogleTtsConfigured()) {
+      throw new Error('Google TTS fallback is not configured');
+    }
+
+    const endpoint = buildGoogleTtsUrl();
+    const response = await axios.post(
+      endpoint,
+      {
         input: request.input,
         voice: request.voice,
-        audioConfig: request.audioConfig
-      };
-      
-      const response = await axios.post(
-        process.env.TTS_ENDPOINT || "https://texttospeech.googleapis.com/v1/text:synthesize", 
-        apiRequest, 
-        {
-          headers: {
-            "Content-Type": "application/json",
-            "X-Goog-Api-Key": request.apiKey || currentTtsApiKey
-          }
-        }
-      );
+        audioConfig: {
+          audioEncoding: request.audioConfig?.audioEncoding || "LINEAR16",
+          speakingRate: request.audioConfig?.speakingRate,
+          pitch: request.audioConfig?.pitch,
+        },
+      },
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
-      console.log(`[${new Date().toISOString()}] Google TTS: Received response`);
-      
-      let audioContent;
-      
-      if (response.data.audioContent) {
-        console.log(`[${new Date().toISOString()}] Google TTS: Audio content received (${response.data.audioContent.length / 1.33} bytes)`);
-      } else {
-        throw new Error("No audio content in response from Google TTS");
-      }
-      
-      // Google API already returns base64, return it directly
-      return [{ audioContent: response.data.audioContent }];
-    } catch (error) {
-      console.error(`[${new Date().toISOString()}] Google TTS API Error:`, error.message);
-      if (error.response) {
-        console.error(`Response status: ${error.response.status}`);
-        console.error(`Response data:`, error.response.data);
-      }
-      throw error;
+    const audioContent = response?.data?.audioContent;
+    if (!audioContent) {
+      throw new Error('Google TTS returned no audio content');
     }
-  }
+
+    return [{ audioContent }];
+  },
 };
 
-// Helper function to map Google voice names to Azure voice names
-function mapGoogleVoiceToAzure(googleVoiceName) {
-  const voiceMap = {
-    // Google Cloud TTS Standard voices (en-GB)
-    'en-GB-Standard-A': 'en-GB-SoniaNeural',
-    'en-GB-Standard-B': 'en-GB-ThomasNeural',
-    'en-GB-Standard-C': 'en-GB-SoniaNeural',
-    'en-GB-Standard-D': 'en-GB-ThomasNeural',
-    'en-GB-Standard-F': 'en-GB-SoniaNeural',
-    // Google Cloud TTS Standard voices (en-US)
-    'en-US-Neural2-A': 'en-US-AriaNeural',
-    'en-US-Neural2-C': 'en-US-GuyNeural',
-    'en-US-Neural2-E': 'en-US-JennyNeural',
-    'en-US-Standard-A': 'en-US-AriaNeural',
-    'en-US-Standard-B': 'en-US-GuyNeural',
-    'en-US-Standard-C': 'en-US-JennyNeural',
-    'en-US-Standard-D': 'en-US-AriaNeural',
-    // Custom voice name formats
-    'en-US-male-brian': 'en-US-GuyNeural',
-    'en-US-female-alice': 'en-US-AriaNeural',
-    'en-GB-male-alan': 'en-GB-ThomasNeural',
-    'en-GB-female-susan': 'en-GB-SoniaNeural'
+const gradiumClient = {
+  synthesizeSpeech: async (request) => {
+    if (!isGradiumConfigured()) {
+      throw new Error('Gradium TTS fallback is not configured');
+    }
+
+    const text = extractSpeechText(request.input);
+    if (!text) {
+      throw new Error('Gradium TTS request did not contain readable text or SSML content');
+    }
+
+    const response = await axios.post(
+      currentGradiumTtsEndpoint,
+      {
+        text,
+        voice_id: resolveGradiumVoiceId(request),
+        output_format: 'wav',
+        model_name: currentGradiumTtsModel,
+        only_audio: true,
+      },
+      {
+        headers: {
+          'x-api-key': currentGradiumApiKey,
+          'Content-Type': 'application/json',
+        },
+        responseType: 'arraybuffer',
+      }
+    );
+
+    const audioBuffer = Buffer.from(response.data);
+    if (!audioBuffer.length) {
+      throw new Error('Gradium TTS returned empty audio response');
+    }
+
+    return [{ audioContent: audioBuffer.toString('base64') }];
+  },
+};
+
+const localClient = {
+  synthesizeSpeech: async (request) => {
+    const text = extractSpeechText(request.input);
+    if (!text) {
+      throw new Error('Local TTS request did not contain readable text or SSML content');
+    }
+
+    const tmpFilePath = path.join(process.cwd(), "audio", `local-tts-${uuidv4()}.wav`);
+    ensureDirectoryExistence(tmpFilePath);
+
+    const speakingRate = Number(request?.audioConfig?.speakingRate || 1.0);
+    const pitchDelta = Number(request?.audioConfig?.pitch || 0);
+    const speed = Math.max(120, Math.min(300, Math.round(175 * speakingRate)));
+    const pitch = Math.max(0, Math.min(99, 50 + Math.round(pitchDelta * 5)));
+
+    const languageCode = String(request?.voice?.languageCode || "en-US").toLowerCase();
+    const voice = languageCode.startsWith("en") ? "en" : languageCode;
+
+    await new Promise((resolve, reject) => {
+      execFile(
+        "espeak-ng",
+        ["-v", voice, "-s", String(speed), "-p", String(pitch), "-w", tmpFilePath, text],
+        (error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        }
+      );
+    });
+
+    try {
+      const wavBuffer = await fs.promises.readFile(tmpFilePath);
+      return [{ audioContent: wavBuffer.toString('base64') }];
+    } finally {
+      fs.promises.unlink(tmpFilePath).catch(() => {});
+    }
+  },
+};
+
+function toSafeTtsError(error) {
+  const status = error?.response?.status || 500;
+  const providerMessage = error?.response?.data?.error?.message;
+  const message = typeof providerMessage === 'string' && providerMessage.trim()
+    ? providerMessage
+    : (error?.message || 'Unknown TTS error');
+
+  return {
+    status,
+    message,
   };
-  
-  // Always return a mapped voice, fallback to AriaNeural for unmapped voices
-  const mappedVoice = voiceMap[googleVoiceName];
-  if (mappedVoice) {
-    console.log(`[${new Date().toISOString()}] Mapped Google voice "${googleVoiceName}" to Azure voice "${mappedVoice}"`);
-    return mappedVoice;
-  }
-  
-  console.log(`[${new Date().toISOString()}] No mapping found for voice "${googleVoiceName}", using default "en-US-AriaNeural"`);
-  return 'en-US-AriaNeural';
 }
 
-// Azure TTS client
-const azureClient = {
-  synthesizeSpeech: async (request) => {
-    try {
-      console.log(`[${new Date().toISOString()}] Azure TTS: Making API call`);
-      
-      // Convert Google TTS request format to Azure SSML format
-      let voiceName = request.voice?.name || 'en-US-AriaNeural';
-      voiceName = mapGoogleVoiceToAzure(voiceName);  // Map Google voices to Azure
-      const speakingRate = (request.audioConfig?.speakingRate || 1.0).toFixed(2);
-      
-      let ssml = `<speak version="1.0" xml:lang="en-US"><voice name="${voiceName}"><prosody rate="${speakingRate}">`;
-      if (request.input.text) {
-        ssml += request.input.text;
-      } else if (request.input.ssml) {
-        ssml += request.input.ssml.replace(/<speak>|<\/speak>/g, '');
-      }
-      ssml += '</prosody></voice></speak>';
-      
-      const response = await axios.post(
-        `${currentAzureTtsEndpoint}/cognitiveservices/v1`,
-        ssml,
-        {
-          headers: {
-            'Ocp-Apim-Subscription-Key': currentAzureTtsKey,
-            'Content-Type': 'application/ssml+xml',
-            'X-Microsoft-OutputFormat': 'audio-16khz-32kbitrate-mono-mp3'
-          },
-          params: {
-            'api-version': '1.0'
-          },
-          responseType: 'arraybuffer'
-        }
-      );
-      
-      console.log(`[${new Date().toISOString()}] Azure TTS: Received audio response (${response.data.length} bytes)`);
-      
-      // Azure returns direct audio content as Buffer - wrap it in the expected format
-      return [{
-        audioContent: Buffer.isBuffer(response.data) ? response.data.toString('base64') : response.data
-      }];
-    } catch (error) {
-      console.error(`[${new Date().toISOString()}] Azure TTS API Error:`, error.message);
-      if (error.response) {
-        console.error(`Response status: ${error.response.status}`);
-        console.error(`Response data:`, error.response.data);
-      }
+function shouldFallbackToGoogle(error) {
+  const safeError = toSafeTtsError(error);
+  return safeError.status === 429 || /resource_exhausted|quota/i.test(safeError.message);
+}
+
+async function synthesizeSpeechWithFallback(request) {
+  try {
+    return await geminiClient.synthesizeSpeech(request);
+  } catch (error) {
+    if (!shouldFallbackToGoogle(error)) {
       throw error;
     }
+
+    if (isGoogleTtsConfigured()) {
+      console.warn(`[${new Date().toISOString()}] Gemini TTS quota hit. Falling back to Google TTS endpoint.`);
+      try {
+        return await googleClient.synthesizeSpeech(request);
+      } catch (googleError) {
+        const safeGoogleError = toSafeTtsError(googleError);
+        console.warn(`[${new Date().toISOString()}] Google TTS fallback failed: ${safeGoogleError.message} (status ${safeGoogleError.status}).`);
+      }
+    }
+
+    if (isGradiumConfigured()) {
+      console.warn(`[${new Date().toISOString()}] Falling back to Gradium TTS endpoint.`);
+      try {
+        return await gradiumClient.synthesizeSpeech(request);
+      } catch (gradiumError) {
+        const safeGradiumError = toSafeTtsError(gradiumError);
+        console.warn(`[${new Date().toISOString()}] Gradium TTS fallback failed: ${safeGradiumError.message} (status ${safeGradiumError.status}). Falling back to local TTS.`);
+      }
+    }
+
+    console.warn(`[${new Date().toISOString()}] Using local espeak-ng fallback TTS.`);
+    return localClient.synthesizeSpeech(request);
   }
-};
+}
+
+
 
 console.log(`[${new Date().toISOString()}] TTS: Provider configured as "${currentTtsProvider}"`);
 
 // Helper function to get the correct TTS client based on current provider
 function getClient() {
-  if (currentTtsProvider === 'azure') {
-    console.log(`[${new Date().toISOString()}] TTS: Using Azure provider`);
-    return azureClient;
-  } else if (currentTtsProvider === 'gemini') {
-    console.log(`[${new Date().toISOString()}] TTS: Using Gemini provider`);
-    return geminiClient;
-  } else {
-    console.log(`[${new Date().toISOString()}] TTS: Using Google provider`);
-    return googleClient;
-  }
+  return {
+    synthesizeSpeech: synthesizeSpeechWithFallback,
+  };
 }
 
 // Helper function to ensure directory exists
@@ -299,13 +417,7 @@ function determineRhubarbPath() {
 // Route to the appropriate TTS client based on provider
 const client = {
   synthesizeSpeech: async (request) => {
-    if (currentTtsProvider === 'gemini') {
-      return geminiClient.synthesizeSpeech(request);
-    } else if (currentTtsProvider === 'azure') {
-      return azureClient.synthesizeSpeech(request);
-    } else {
-      return googleClient.synthesizeSpeech(request);
-    }
+    return synthesizeSpeechWithFallback(request);
   }
 };
 
@@ -342,7 +454,7 @@ export const setupTTSRoutes = (app, port) => {
       console.log(`[${new Date().toISOString()}] Batch TTS: Starting processing of ${segments.length} segments`);
       
       for (const [index, segment] of segments.entries()) {
-        const { text, voiceSettings, segmentId } = segment;
+        const { text, voiceSettings, segmentId, speakerName } = segment;
         
         console.log(`[${new Date().toISOString()}] Batch TTS: Processing segment ${index + 1}/${segments.length} (ID: ${segmentId})`);
         console.log(`  - Text: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
@@ -370,8 +482,9 @@ export const setupTTSRoutes = (app, port) => {
               languageCode: voiceSettings.languageCode || "en-US",
               name: voiceSettings.name,
             },
+            speakerName,
             audioConfig: { 
-              audioEncoding: "MP3", 
+              audioEncoding: "LINEAR16", 
               speakingRate: voiceSettings.rate || 1.0,
               pitch: voiceSettings.pitch || 0,
             },
@@ -381,14 +494,15 @@ export const setupTTSRoutes = (app, port) => {
           console.log(`[${new Date().toISOString()}] Batch TTS: TTS API response received for segment ${segmentId} (took ${apiDuration}ms)`);
           
           // Create a unique filename for this segment
-          const fileName = `segment-${segmentId.replace(/[^\w\-\.]/g, '_')}-${uuidv4()}.mp3`;
+          const fileName = `segment-${segmentId.replace(/[^\w\-\.]/g, '_')}-${uuidv4()}.wav`;
           const filePath = path.join(process.cwd(), "audio", fileName);
           ensureDirectoryExistence(filePath);
 
-          // Save the audio file
+          // Save the audio file (with optional speaker-specific background noise)
           const audioBuffer = typeof response.audioContent === 'string' ? Buffer.from(response.audioContent, 'base64') : response.audioContent;
-          await fs.promises.writeFile(filePath, audioBuffer);
-          console.log(`[${new Date().toISOString()}] Batch TTS: Audio file saved for segment ${segmentId}: ${fileName}`);
+          const { audioBuffer: processedAudioBuffer, profileApplied, mixed } = await addNoiseForSpeaker(audioBuffer, speakerName);
+          await fs.promises.writeFile(filePath, processedAudioBuffer);
+          console.log(`[${new Date().toISOString()}] Batch TTS: Audio file saved for segment ${segmentId}: ${fileName} (profile=${profileApplied}, mixed=${mixed})`);
 
           let audioUrl;
           if (process.env.NODE_ENV === "development") {
@@ -407,10 +521,11 @@ export const setupTTSRoutes = (app, port) => {
           });
           successCount++;
         } catch (segmentError) {
-          console.error(`[${new Date().toISOString()}] Batch TTS: Error processing segment ${segmentId}:`, segmentError);
+          const safeError = toSafeTtsError(segmentError);
+          console.error(`[${new Date().toISOString()}] Batch TTS: Error processing segment ${segmentId}: ${safeError.message} (status ${safeError.status})`);
           results.push({
             segmentId,
-            error: segmentError.message,
+            error: safeError.message,
             success: false
           });
           failureCount++;
@@ -431,12 +546,12 @@ export const setupTTSRoutes = (app, port) => {
   });
 
   // TalkingHead TTS endpoint
-  app.post("/api/tts", async (req, res) => {
+  app.post(["/api/tts", "/api/tts/:speakerName"], async (req, res) => {
     try {
       console.log(`[${new Date().toISOString()}] TalkingHead TTS: Received request`);
       
       // Extract the request body that would normally go directly to Google's API
-      const { input, voice, audioConfig, enableTimePointing } = req.body;
+      const { input, voice, audioConfig, enableTimePointing, speakerName, noiseProfile } = req.body;
       
       if (!input || !voice) {
         console.error(`[${new Date().toISOString()}] TalkingHead TTS: Invalid request - missing input or voice`);
@@ -446,19 +561,30 @@ export const setupTTSRoutes = (app, port) => {
       console.log(`[${new Date().toISOString()}] TalkingHead TTS: Processing request with voice: ${voice.name}`);
       
       // Make the request to the configured TTS provider
+      const resolvedSpeakerName = req.params?.speakerName || speakerName || req.headers['x-speaker-name'] || null;
+
       const [response] = await getClient().synthesizeSpeech({
         input: input,
         voice: voice,
+        speakerName: resolvedSpeakerName,
         audioConfig: audioConfig,
         apiKey: req.headers['x-tts-key'] || undefined
       });
+
+      const rawAudioBuffer = typeof response.audioContent === 'string'
+        ? Buffer.from(response.audioContent, 'base64')
+        : response.audioContent;
+
+      const { audioBuffer: processedAudioBuffer, profileApplied, mixed } = await addNoiseForSpeaker(rawAudioBuffer, resolvedSpeakerName, {
+        voiceName: voice?.name,
+        noiseProfile,
+      });
       
       // audioContent is already base64 from the client, use directly
-      const audioContentBase64 = typeof response.audioContent === 'string' 
-        ? response.audioContent 
-        : response.audioContent.toString('base64');
+      const audioContentBase64 = processedAudioBuffer.toString('base64');
       
       console.log(`[${new Date().toISOString()}] TalkingHead TTS: Sending ${audioContentBase64.length} chars of base64 audio`);
+      console.log(`[${new Date().toISOString()}] TalkingHead TTS: Noise profile=${profileApplied}, mixed=${mixed}, speaker=${resolvedSpeakerName || 'n/a'}, voice=${voice?.name || 'n/a'}`);
       
       // Return the response in the format expected by TalkingHead
       res.json({
@@ -467,14 +593,15 @@ export const setupTTSRoutes = (app, port) => {
       });
       
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] TalkingHead TTS: Error:`, error);
-      res.status(500).json({ error: "Error processing TTS request" });
+      const safeError = toSafeTtsError(error);
+      console.error(`[${new Date().toISOString()}] TalkingHead TTS: Error: ${safeError.message} (status ${safeError.status})`);
+      res.status(safeError.status).json({ error: safeError.message });
     }
   });
 
   // Single text-to-speech synthesis endpoint with lip sync
   app.post("/synthesize", async (req, res) => {
-    const { text, voiceSettings } = req.body;
+    const { text, voiceSettings, speakerName, noiseProfile } = req.body;
 
     try {
       const [response] = await getClient().synthesizeSpeech({
@@ -483,6 +610,7 @@ export const setupTTSRoutes = (app, port) => {
           languageCode: voiceSettings.languageCode,
           name: voiceSettings.name,
         },
+        speakerName,
         audioConfig: { audioEncoding: "LINEAR16" },
       });
 
@@ -494,7 +622,12 @@ export const setupTTSRoutes = (app, port) => {
       ensureDirectoryExistence(filePath);
 
       const audioBuffer = typeof response.audioContent === 'string' ? Buffer.from(response.audioContent, 'base64') : response.audioContent;
-      await fs.promises.writeFile(filePath, audioBuffer);
+      const { audioBuffer: processedAudioBuffer, profileApplied, mixed } = await addNoiseForSpeaker(audioBuffer, speakerName, {
+        voiceName: voiceSettings?.name,
+        noiseProfile,
+      });
+      await fs.promises.writeFile(filePath, processedAudioBuffer);
+      console.log(`[${new Date().toISOString()}] Synthesize TTS: Audio saved with profile=${profileApplied}, mixed=${mixed}`);
 
       const rhubarbPath = determineRhubarbPath();
       const jsonFilePath = filePath.replace(".wav", ".json");
@@ -524,8 +657,9 @@ export const setupTTSRoutes = (app, port) => {
         },
       );
     } catch (error) {
-      console.error("Error:", error);
-      res.status(500).send("Error synthesizing speech");
+      const safeError = toSafeTtsError(error);
+      console.error(`[${new Date().toISOString()}] Synthesize TTS: Error: ${safeError.message} (status ${safeError.status})`);
+      res.status(safeError.status).send(safeError.message);
     }
   });
 };
@@ -538,17 +672,39 @@ export function setTtsApiKey(apiKey) {
   currentTtsApiKey = apiKey || '';
 }
 
+export function setTtsEndpoint(endpoint) {
+  currentTtsEndpoint = endpoint || '';
+}
+
 export function setGeminiTtsApiKey(apiKey) {
   currentGeminiApiKey = apiKey || '';
   console.log(`[${new Date().toISOString()}] Gemini TTS API key configured`);
 }
 
+export function setGeminiTtsModel(model) {
+  if (model && String(model).trim()) {
+    currentGeminiTtsModel = String(model).trim();
+    console.log(`[${new Date().toISOString()}] Gemini TTS model configured: ${currentGeminiTtsModel}`);
+  }
+}
+
+export function setGradiumTtsApiKey(apiKey) {
+  currentGradiumApiKey = apiKey || '';
+}
+
+export function setGradiumTtsEndpoint(endpoint) {
+  currentGradiumTtsEndpoint = endpoint || currentGradiumTtsEndpoint;
+}
+
+export function setGradiumTtsModel(model) {
+  if (model && String(model).trim()) {
+    currentGradiumTtsModel = String(model).trim();
+  }
+}
+
 export function setTtsProvider(provider) {
-  if (['google', 'azure', 'gemini'].includes(provider)) {
-    currentTtsProvider = provider;
-    console.log(`[${new Date().toISOString()}] TTS Provider switched to: ${provider}`);
-  } else {
-    console.error(`Invalid TTS provider: ${provider}. Must be 'google', 'azure', or 'gemini'`);
+  if (provider !== 'gemini') {
+    console.error(`Invalid TTS provider: ${provider}. Only 'gemini' is supported.`);
   }
 }
 
@@ -557,11 +713,6 @@ export function getTtsProvider() {
 }
 
 export function isTtsConfigured() {
-  if (currentTtsProvider === 'gemini') {
-    return Boolean(currentGeminiApiKey && String(currentGeminiApiKey).trim().length > 0);
-  } else if (currentTtsProvider === 'azure') {
-    return Boolean(currentAzureTtsKey && currentAzureTtsEndpoint);
-  } else {
-    return Boolean(currentTtsApiKey && String(currentTtsApiKey).trim().length > 0);
-  }
+  const geminiConfigured = Boolean(currentGeminiApiKey && String(currentGeminiApiKey).trim().length > 0);
+  return geminiConfigured || isGoogleTtsConfigured() || isGradiumConfigured();
 }

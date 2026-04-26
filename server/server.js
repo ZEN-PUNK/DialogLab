@@ -8,12 +8,13 @@ import os from "os";
 import ConversationManager from "./chat.js";
 import ConversationMemory from "./conversationmemory.js";
 import { fileURLToPath } from "url";
-import { setupTTSRoutes, ttsClient, setTtsApiKey, setTtsProvider, getTtsProvider, setGeminiTtsApiKey } from "./tts.js";
+import { setupTTSRoutes, ttsClient, setTtsApiKey } from "./tts.js";
 import * as llmProvider from "./providers/llmProvider.js";
 import { setupModelRoutes } from "./modelAPI.js";
 import ContentManager from "./contentManager.js";
 import { setupContentRoutes } from "./contentAPI.js";
 import { setupVerificationRoutes } from "./verificationAPI.js";
+import { setupTavilyRoutes, setTavilyApiKey } from "./tavilyService.js";
 
 
 dotenv.config();
@@ -34,16 +35,6 @@ app.use(
 );
 app.use(bodyParser.json({ limit: "50mb" }));
 app.use("/audio", express.static("audio"));
-
-// Serve the built client files
-const clientDistPath = path.join(__dirname, '../client/dist');
-if (fs.existsSync(clientDistPath)) {
-  app.use(express.static(clientDistPath));
-  // Fallback to index.html for client-side routing
-  app.get('/', (req, res) => {
-    res.sendFile(path.join(clientDistPath, 'index.html'));
-  });
-}
 
 // Use the TTS client from the tts.js module instead of creating a new one
 const client = ttsClient;
@@ -72,64 +63,7 @@ app.post("/save-quotes", (req, res) => {
 // Setup TTS routes from the tts.js module
 setupTTSRoutes(app, port);
 
-// TTS Provider endpoint
-app.post("/api/tts-provider", (req, res) => {
-  try {
-    const { provider } = req.body || {};
-    if (!provider || !['google', 'azure'].includes(provider)) {
-      return res.status(400).json({ status: 'error', message: 'provider must be "google" or "azure"' });
-    }
-    setTtsProvider(provider);
-    return res.json({ status: 'success', currentProvider: getTtsProvider() });
-  } catch (error) {
-    console.error('Error setting TTS provider:', error);
-    return res.status(500).json({ status: 'error', message: 'Failed to set TTS provider' });
-  }
-});
-
-// Get current TTS provider
-app.get("/api/tts-provider", (req, res) => {
-  try {
-    return res.json({ currentProvider: getTtsProvider() });
-  } catch (error) {
-    console.error('Error getting TTS provider:', error);
-    return res.status(500).json({ status: 'error', message: 'Failed to get TTS provider' });
-  }
-});
-
-// Get configured API keys from environment
-app.get("/api/llm-keys", (req, res) => {
-  try {
-    // Return partial/masked keys for security - only first 10 chars visible
-    const maskKey = (key) => {
-      if (!key) return '';
-      if (key.length <= 10) return key;
-      return key.substring(0, 10) + '...' + key.substring(key.length - 4);
-    };
-    
-    return res.json({
-      gemini: maskKey(process.env.GEMINI_API_KEY),
-      openai: maskKey(process.env.OPENAI_API_KEY),
-      tts: maskKey(process.env.TTS_API_KEY),
-      hasGemini: !!process.env.GEMINI_API_KEY,
-      hasOpenAI: !!process.env.OPENAI_API_KEY,
-      hasTTS: !!process.env.TTS_API_KEY
-    });
-  } catch (error) {
-    console.error('Error getting API keys:', error);
-    return res.status(500).json({ status: 'error', message: 'Failed to get API keys' });
-  }
-});
-
 // Setup model management routes
-app.get("/api/tts-provider", (req, res) => {
-  try {
-    return res.json({ currentProvider: getTtsProvider() });
-  } catch (error) {
-    console.error('Error getting TTS provider:', error);
-    return res.status(500).json({ status: 'error', message: 'Failed to get TTS provider' });
-  }
-});
 setupModelRoutes(app);
 
 // Setup content API routes
@@ -137,6 +71,9 @@ setupContentRoutes(app);
 
 // Setup verification routes
 setupVerificationRoutes(app);
+
+// Setup Tavily tool routes
+setupTavilyRoutes(app);
 
 let conversationManager, conversationMemory;
 
@@ -278,9 +215,7 @@ app.post("/api/generate-audio", async (req, res) => {
       `${voiceSettings.name}-${Date.now()}.wav`,
     );
     ensureDirectoryExistence(filePath);
-
-    const audioBuffer = typeof response.audioContent === 'string' ? Buffer.from(response.audioContent, 'base64') : response.audioContent;
-    await fs.promises.writeFile(filePath, audioBuffer);
+    await fs.promises.writeFile(filePath, response.audioContent, "binary");
 
     // const rhubarbPath = determineRhubarbPath();
     // const jsonFilePath = filePath.replace(".wav", ".json");
@@ -356,8 +291,6 @@ async function runConversation(config) {
       agent.isHumanProxy,
       agent.customAttributes,
       agent.fillerWordsFrequency,
-      agent.proactiveSettings,
-      agent.roleDescription
     );
 
     if (agent.isHumanProxy) {
@@ -559,9 +492,6 @@ app.post('/api/generate-scene-description', async (req, res) => {
       ? speakers.map(s => s.name).join(', ')
       : null;
     
-    // Identify if this is an insurance claims scenario (VOX app is exclusively insurance)
-    const isInsuranceClaim = true;
-    
     // Format party information for the prompt if available
     let partyContext = '';
     if (partyInfo) {
@@ -581,39 +511,40 @@ app.post('/api/generate-scene-description', async (req, res) => {
       }
     }
     
-    // Prepare context-specific prompt for LLM
-    let prompt;
-    if (isInsuranceClaim) {
-      prompt = `Create a highly cinematic, atmospheric scene description for an auto insurance claim named "${sceneName}".
-      ${speakerNames ? `The scene includes these participants: ${speakerNames}.` : ''}${partyContext}
-      
-      Context: This is a professional insurance claims scenario.
-      
-      The description MUST be vivid, detailed, and narrative, similar to this example:
-      "A driver stands on a rainy shoulder next to a dented sedan, their breath visible in the cold air as they hold a phone to their ear. On the other end of the line, a claims adjuster sits in a quiet, backlit office, typing steadily as they speak in a calm, rhythmic tone. The conversation flows from the initial panicked reporting of the collision to the clinical exchange of policy numbers and the coordination of a local tow truck. As the driver uses their phone to scan the VIN and upload photos of the shattered taillight through a mobile app, the adjuster confirms the coverage details and authorizes a rental car. The scene ends with the driver stepping into a cab and the adjuster clicking a final button to submit the claim, transitioning the chaos of the roadside back into a quiet, resolved digital file."
-      
-      Requirements:
-      1. Write 4-6 sentences full of sensory details (visuals, sounds, environment).
-      2. Capture the physical location of the claimant (e.g., roadside, at home, mechanic) vs the adjuster (office, desk).
-      3. Describe the arc of the interaction (panic/stress leading to resolution/calm).
-      4. DO NOT write "In this scene" or "This scene is about". 
-      5. Provide ONLY the description narrative, without any additional explanations or formatting.`;
-    } else {
-      prompt = `Generate a concise description for a conversation scene named "${sceneName}".
-      ${speakerNames ? `The scene includes the following participants: ${speakerNames}.` : ''}${partyContext}
-      
-      The description should:
-      1. Be one sentence long
-      2. Capture the essence of what the scene might be about based on its name
-      3. Be suitable as context for a natural conversation
-      4. Not include phrases like "In this scene" or "This scene is about"
-      ${partyContext ? '5. Consider the party dynamics mentioned above' : ''}
-      
-      Provide only the description text without any additional explanations or formatting.`;
-    }
+    const hasAlice = speakers && Array.isArray(speakers)
+      ? speakers.some((s) => String(s?.name || '').toLowerCase() === 'alice')
+      : false;
+    const hasBob = speakers && Array.isArray(speakers)
+      ? speakers.some((s) => String(s?.name || '').toLowerCase() === 'bob')
+      : false;
+
+    // Prepare prompt for LLM
+    const prompt = `Generate a concise but practical description for ONE FNOL conversation scene named "${sceneName}".
+    ${speakerNames ? `The scene includes the following participants: ${speakerNames}.` : ''}${partyContext}
+
+    Role framing:
+    ${hasAlice ? '- Alice is the insurance intake assistant leading the interview.' : '- The assistant leads the insurance intake interview.'}
+    ${hasBob ? '- Bob is the accident reporter answering questions.' : '- The reporter answers with first-hand accident details.'}
+
+    The description should:
+    1. Be 2-4 sentences.
+    2. Stay as ONE scene only (no phases, chapters, or separate scenes).
+    3. Describe a guided FNOL Q&A that systematically covers:
+       - policy and vehicle identification
+       - reporter identity/contact and relationship to policyholder
+       - accident date/time/location/conditions and free-form narrative
+       - driver validity/scope, impairments, and hit-and-run indicators
+       - other-party, police, witness, injury, and property-damage details
+       - liability indicators, exclusions/obligations, recourse and fraud signals
+       - settlement preferences, communication channel, and next required documents
+    4. End with explicit next steps and unresolved items.
+    5. Not include phrases like "In this scene" or "This scene is about".
+    ${partyContext ? '6. Consider the party dynamics mentioned above.' : ''}
+
+    Provide only the description text without markdown or extra commentary.`;
 
     // Get response from LLM
-    const description = await llmProvider.generateText(prompt, { maxTokens: 400, temperature: 0.7 });
+    const description = await llmProvider.generateText(prompt, { maxTokens: 220, temperature: 0.35 });
     
     console.log(`Generated scene description for "${sceneName}": ${description}`);
 
@@ -638,18 +569,37 @@ app.post('/api/generate-conversation-prompt', async (req, res) => {
       ? speakers.map(s => s.name).join(', ')
       : null;
     
-    // Prepare prompt for LLM
-    const prompt = `Create a situational context for a conversation using the following format:
-    "${speakerNames || 'The participants'} is in a conversation where ${sceneDescription}. They are talking about ${subTopic || 'various topics related to the scene'}."
+    // Prepare prompt for LLM (single-scene workflow only)
+    const prompt = `Write one single-scene conversation context for these speakers: ${speakerNames || 'participants'}.
 
-    The context should:
-    1. Naturally incorporate all the provided speakers: ${speakerNames || 'Not specified'}
-    2. Do not add any additional information about the topic, or participants
-    3. Reference the interaction style (${interactionPattern || 'neutral'}) through the tone
-    4. Be 1-2 sentences long and feel natural
-    5. Not include phrases like "In this scene" or "This scene is about"
+  Scene description:
+  ${sceneDescription}
 
-    Provide only the context text without any additional explanations or formatting.`;
+  Subtopic:
+  ${subTopic || 'policy and accident intake'}
+
+  Interaction style:
+  ${interactionPattern || 'neutral'}
+
+  Requirements:
+  1. Keep this as ONE scene only. Do not split into stages/scenes/chapters.
+  2. Frame it as a guided Q&A interview where Alice systematically asks and Bob answers.
+  3. Ensure the interview attempts to cover, in this one scene:
+     - policy and vehicle identification
+     - accident circumstances
+     - driver scope/eligibility and impairments
+     - other-party details
+     - police and witnesses
+     - injuries and property damage
+     - liability indicators
+     - coverage/exclusion and duty-of-disclosure checks
+     - fraud-signal checks
+     - settlement preferences and communication channel
+  4. End with explicit next steps and what evidence/documents are still needed.
+  5. Keep concise and practical (2-4 sentences). No markdown, no bullets.
+  6. Do not use the phrases "In this scene" or "This scene is about".
+
+  Return only the final context text.`;
 
     // Get response from LLM
     const conversationPrompt = await llmProvider.generateText(prompt, { maxTokens: 250, temperature: 0.7 });
@@ -1314,30 +1264,15 @@ if (process.env.GEMINI_API_KEY) {
     // Lazy import to avoid circular deps if any
     const { setGeminiApiKey } = await import('./providers/geminiAPI.js');
     setGeminiApiKey(process.env.GEMINI_API_KEY);
-    // Also set for TTS
-    setGeminiTtsApiKey(process.env.GEMINI_API_KEY);
   } catch (e) {
     console.warn('Failed to initialize GEMINI_API_KEY from env:', e.message);
   }
 }
-
-// Initialize Azure OpenAI from environment if provided
-if (process.env.AZURE_OPENAI_ENDPOINT && process.env.AZURE_OPENAI_KEY && typeof llmProvider.configureAzureOpenAI === 'function') {
-  try {
-    llmProvider.configureAzureOpenAI(
-      process.env.AZURE_OPENAI_ENDPOINT,
-      process.env.AZURE_OPENAI_KEY,
-      process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-5.4-nano',
-      process.env.AZURE_OPENAI_API_VERSION || '2024-12-01-preview'
-    );
-    console.log(`[${new Date().toISOString()}] Azure OpenAI initialized with endpoint: ${process.env.AZURE_OPENAI_ENDPOINT}`);
-  } catch (e) {
-    console.warn('Failed to initialize Azure OpenAI from env:', e.message);
-  }
-}
-
 if (process.env.TTS_API_KEY) {
   setTtsApiKey(process.env.TTS_API_KEY);
+}
+if (process.env.TAVILY_API_KEY) {
+  setTavilyApiKey(process.env.TAVILY_API_KEY);
 }
 
 // Initialize provider from environment

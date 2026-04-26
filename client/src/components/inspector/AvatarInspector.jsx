@@ -2,13 +2,19 @@ import React, { useState, useEffect, useCallback } from 'react';
 import useEditorStore from './store';
 import { avatarTemplates } from '../topic/avatarTemplates';
 
-// Real Azure Neural Voices with style support
+// Gemini TTS voices
 const VOICE_CATALOG = {
   'en-US-female-aria': {
     label: 'en-US-AriaNeural (F)',
     region: 'US',
     gender: 'female',
     styles: ['cheerful', 'sad', 'angry', 'calm', 'fearful', 'disgruntled', 'serious', 'shouting', 'unfriendly', 'whispering']
+  },
+  'en-US-female-eve': {
+    label: 'en-US-EveNeural (F)',
+    region: 'US',
+    gender: 'female',
+    styles: ['cheerful', 'sad', 'angry', 'calm', 'fearful', 'disgruntled', 'serious']
   },
   'Kore': {
     label: 'Kore (Gemini Female)',
@@ -102,6 +108,25 @@ const fillerWordsFrequencyOptions = [
 function AvatarInspector({ avatar }) {
   const { selectedItem, updateSelectedItem } = useEditorStore();
 
+  const normalizedAvatarConfig = {
+    ...(avatar?.avatarConfig || {}),
+    settings: {
+      ...(avatar?.avatarConfig?.settings || {})
+    }
+  };
+
+  const formatAttributeValue = (value) => {
+    if (value === null || value === undefined) return '';
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return String(value);
+    }
+    try {
+      return JSON.stringify(value);
+    } catch (error) {
+      return String(value);
+    }
+  };
+
   // Add state for collapsible sections
   const [activeTab, setActiveTab] = useState('basic');
 
@@ -131,19 +156,19 @@ function AvatarInspector({ avatar }) {
     );
   }
 
-  const avatarGender = avatar.avatarConfig.gender || 'male';
+  const avatarGender = normalizedAvatarConfig.gender || 'male';
 
   // Modify the useEffect hook that loads configurations
   useEffect(() => {
     if (avatar && avatar.avatarConfig) {
       // Create a unique key for this avatar based on name or id
-      const storageKey = `avatar-config-${avatar.avatarConfig.name || selectedItem.id}`;
+      const storageKey = `avatar-config-${normalizedAvatarConfig.name || selectedItem?.id || 'unknown'}`;
       
       try {
         const savedConfig = localStorage.getItem(storageKey);
         
         // Check if we have a template for this avatar
-        const template = avatarTemplates[avatar.avatarConfig.name];
+        const template = avatarTemplates[normalizedAvatarConfig.name];
         
         if (savedConfig) {
           // If there's a saved config, use it
@@ -168,7 +193,7 @@ function AvatarInspector({ avatar }) {
           updateSelectedItem({
             ...selectedItem,
             avatarConfig: {
-              ...avatar.avatarConfig,
+              ...normalizedAvatarConfig,
               ...mergedConfig
             }
           });
@@ -185,7 +210,7 @@ function AvatarInspector({ avatar }) {
           updateSelectedItem({
             ...selectedItem,
             avatarConfig: {
-              ...avatar.avatarConfig,
+              ...normalizedAvatarConfig,
               ...template
             }
           });
@@ -206,7 +231,7 @@ function AvatarInspector({ avatar }) {
           updateSelectedItem({
             ...selectedItem,
             avatarConfig: {
-              ...avatar.avatarConfig,
+              ...normalizedAvatarConfig,
               voice: defaultVoice,
               personality: "friendly",
               interactionPattern: "neutral",
@@ -228,7 +253,7 @@ function AvatarInspector({ avatar }) {
         }
         
         // Apply settings to avatar instance
-        applySettingsToAvatar(selectedItem.avatarConfig);
+        applySettingsToAvatar(selectedItem?.avatarConfig || normalizedAvatarConfig);
         
       } catch (error) {
         console.error('Error loading avatar configuration:', error);
@@ -338,14 +363,14 @@ function AvatarInspector({ avatar }) {
   const saveAvatarConfig = (config) => {
     try {
       // Create a unique key for this avatar
-      const storageKey = `avatar-config-${avatar.avatarConfig.name || selectedItem.id}`;
+      const storageKey = `avatar-config-${normalizedAvatarConfig.name || selectedItem?.id || 'unknown'}`;
       
       // Determine if we're working with a full config object or just an avatarConfig
       const avatarConfigToSave = config.avatarConfig || config;
       
       // Include all settings in the saved config using a consistent structure
       const configToSave = {
-        name: avatar.avatarConfig.name || selectedItem.id,
+        name: normalizedAvatarConfig.name || selectedItem?.id || 'unknown',
         // Save all settings directly at the root level for simplicity and consistency
         personality: avatarConfigToSave.personality || selectedItem.avatarConfig?.personality || "friendly",
         interactionPattern: avatarConfigToSave.interactionPattern || selectedItem.avatarConfig?.interactionPattern || "neutral",
@@ -375,14 +400,14 @@ function AvatarInspector({ avatar }) {
         
         // Find the participant with matching name and update their settings
         const participantIndex = participants.findIndex(p => 
-          p.name === avatar.avatarConfig.name || p.id === selectedItem.id
+          p.name === normalizedAvatarConfig.name || p.id === selectedItem?.id
         );
         
         // Create a new participant entry with proper structure if not found
         const participantToAdd = {
           id: selectedItem.id || `generated-${Date.now()}`,
-          name: avatar.avatarConfig.name || selectedItem.id,
-          gender: avatar.avatarConfig.gender || selectedItem.avatarConfig?.gender || "neutral",
+          name: normalizedAvatarConfig.name || selectedItem?.id || 'unknown',
+          gender: normalizedAvatarConfig.gender || selectedItem?.avatarConfig?.gender || "neutral",
           voice: configToSave.voice || "",
           personality: configToSave.personality,
           interactionPattern: configToSave.interactionPattern,
@@ -1035,7 +1060,7 @@ function AvatarInspector({ avatar }) {
                           <li key={`attr-${index}`} className="flex items-center justify-between py-1 px-2 theme-bg-tertiary rounded theme-border theme-border-light">
                             <div className="flex items-center">
                               <span className="text-xs font-medium theme-text-primary">{key}:</span>
-                              <span className="text-xs ml-1 theme-text-secondary">{value}</span>
+                              <span className="text-xs ml-1 theme-text-secondary break-all">{formatAttributeValue(value)}</span>
                             </div>
                             <button
                               onClick={() => handleRemoveAttribute(key)}
@@ -1209,7 +1234,7 @@ function AvatarInspector({ avatar }) {
         <div className="space-y-1">
           <label className="block text-xs font-medium text-black">
             Voice
-            <TooltipIcon text="The avatar's speaking voice - choose from available Azure Neural voices" />
+            <TooltipIcon text="The avatar's speaking voice - choose from available Gemini voices" />
           </label>
           <select 
             className="w-full p-1.5 theme-bg-input theme-border theme-text-primary text-xs rounded"

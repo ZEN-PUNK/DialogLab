@@ -723,6 +723,19 @@ const SnippetInspector: React.FC<{ currentTopic: string }> = ({ currentTopic }) 
                         />
                       </div>
 
+                      <div className="space-y-1">
+                        <label htmlFor="description" className="block text-xs font-medium theme-text-primary">
+                          Description
+                        </label>
+                        <Textarea
+                          id="description"
+                          value={localNode.description || ""}
+                          onChange={(e) => handleChange("description", e.target.value)}
+                          className="w-full p-1.5 theme-bg-input theme-border theme-text-primary resize-y min-h-[50px] text-xs"
+                          placeholder="Describe the scene context and dialogue flow..."
+                        />
+                      </div>
+
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                         <div className="space-y-1">
                           <label htmlFor="turns" className="block text-xs font-medium theme-text-primary">

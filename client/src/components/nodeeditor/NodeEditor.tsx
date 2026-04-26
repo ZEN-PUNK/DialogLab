@@ -1037,17 +1037,13 @@ const NodeEditor: React.FC<{
 
       console.log("Sending config to server:", config);
 
-      // Check LLM status before starting conversation
+      // Block start if Gemini key missing
       try {
         const statusResp = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.LLM_STATUS}`);
         if (statusResp.ok) {
           const status = await statusResp.json();
-          // Check if the current provider is configured (instead of hardcoding Gemini)
-          const currentProvider = status.currentProvider || 'gemini';
-          const isConfigured = status[`${currentProvider}Configured`] || false;
-          
-          if (!isConfigured) {
-            alert(`Please configure ${currentProvider.toUpperCase()} API first.`);
+          if (!status.geminiConfigured) {
+            alert('Please set your Gemini API key first.');
             return;
           }
         }

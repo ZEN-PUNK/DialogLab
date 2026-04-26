@@ -1094,6 +1094,10 @@ class ConversationManager {
         isHumanInput: false
       };
 
+      if (Array.isArray(reply.toolUsage) && reply.toolUsage.length > 0) {
+        message.toolUsage = reply.toolUsage;
+      }
+
       // Add party information if in party mode
       if (this.partyMode) {
         message.party = this.getAgentParty(currentSpeaker);
